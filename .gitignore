@@ -24,7 +24,7 @@ hs_err_pid*
 
 target/
 
-vertx-start-project.iml
+*.iml
 
 .idea/
 
