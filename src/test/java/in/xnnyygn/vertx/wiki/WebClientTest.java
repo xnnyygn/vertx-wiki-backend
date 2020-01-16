@@ -36,7 +36,6 @@ public class WebClientTest {
     }
 
     private void sendRequest(TestContext tc, Async async) {
-        System.out.println("send request");
         WebClient client = WebClient.create(vertx);
         client.get(8080, "localhost", "/")
                 .send(r -> handleResponse(tc, async, r));

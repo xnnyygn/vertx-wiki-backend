@@ -2,8 +2,9 @@ package in.xnnyygn.vertx.wiki;
 
 import com.github.rjeschke.txtmark.Processor;
 import in.xnnyygn.vertx.wiki.database.reactivex.WikiDatabaseService;
-import io.reactivex.observers.DisposableCompletableObserver;
-import io.reactivex.observers.DisposableSingleObserver;
+import io.reactivex.CompletableObserver;
+import io.reactivex.SingleObserver;
+import io.reactivex.disposables.Disposable;
 import io.vertx.core.Promise;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
@@ -22,7 +23,10 @@ import io.vertx.reactivex.ext.web.templ.freemarker.FreeMarkerTemplateEngine;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.Arrays;
 import java.util.Date;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 public class HttpServerVerticle extends AbstractVerticle {
 
@@ -54,6 +58,16 @@ public class HttpServerVerticle extends AbstractVerticle {
         router.post("/save").handler(this::pageSaveHandler);
         router.post("/delete").handler(this::pageDeleteHandler);
 
+        Router apiRouter = Router.router(vertx);
+        apiRouter.get("/pages").handler(this::apiRoot);
+        apiRouter.get("/pages/:id").handler(this::apiGetPage);
+        apiRouter.post().handler(BodyHandler.create());
+        apiRouter.post("/pages").handler(this::apiCreateHandler);
+        apiRouter.put().handler(BodyHandler.create());
+        apiRouter.put("/pages/:id").handler(this::apiUpdateHandler);
+        apiRouter.delete("/pages/:id").handler(this::apiDeletePage);
+        router.mountSubRouter("/api", apiRouter);
+
         templateEngine = FreeMarkerTemplateEngine.create(vertx);
 
         WebClientOptions webClientOptions = new WebClientOptions()
@@ -75,6 +89,142 @@ public class HttpServerVerticle extends AbstractVerticle {
                 });
     }
 
+    private void apiDeletePage(RoutingContext context) {
+        int id = Integer.parseInt(context.request().getParam("id"));
+        dbService.rxDeletePage(id)
+                .subscribe(apiCompletableObserver(context, 204));
+    }
+
+    private void apiUpdateHandler(RoutingContext context) {
+        JsonObject page = context.getBodyAsJson();
+        if (!validateJsonPage(page, "content")) {
+            apiReplyBadRequest(context);
+            return;
+        }
+        int id = Integer.parseInt(context.request().getParam("id"));
+        dbService.rxSavePage(id, page.getString("content"))
+                .subscribe(apiCompletableObserver(context, 200));
+    }
+
+    private void apiCreateHandler(RoutingContext context) {
+        JsonObject page = context.getBodyAsJson();
+        if (!validateJsonPage(page, "name", "content")) {
+            apiReplyBadRequest(context);
+            return;
+        }
+        dbService.rxCreatePage(page.getString("name"), page.getString("content"))
+                .subscribe(apiCompletableObserver(context, 201));
+    }
+
+    private void apiReplyBadRequest(RoutingContext context) {
+        apiReply(context, 400, new JsonObject()
+                .put("success", false)
+                .put("error", "bad request payload"));
+    }
+
+    @SuppressWarnings("BooleanMethodIsAlwaysInverted")
+    private boolean validateJsonPage(JsonObject page, String... expectedKeys) {
+        return Arrays.stream(expectedKeys).allMatch(page::containsKey);
+    }
+
+    private void apiGetPage(RoutingContext context) {
+        int id = Integer.parseInt(context.request().getParam("id"));
+        dbService.rxFetchPageById(id)
+                .subscribe(apiSingleObserver(context, row -> {
+                    if (!row.getBoolean("found")) {
+                        return new ApiResponse(404, new JsonObject()
+                                .put("success", false)
+                                .put("error", "page " + id + " not found"));
+                    }
+                    String content = row.getString("content");
+                    JsonObject page = new JsonObject()
+                            .put("id", id)
+                            .put("name", row.getString("name"))
+                            .put("markdown", content)
+                            .put("html", Processor.process(content));
+                    return new ApiResponse(new JsonObject()
+                            .put("success", true)
+                            .put("page", page));
+                }));
+    }
+
+    private void apiRoot(RoutingContext context) {
+        dbService.rxFetchAllPagesData()
+                .map(rows -> rows.stream()
+                        .map(row -> new JsonObject()
+                                .put("id", row.getInteger("ID"))
+                                .put("name", row.getString("NAME")))
+                        .collect(Collectors.toList()))
+                .subscribe(apiSingleObserver(context, pages -> new ApiResponse(new JsonObject()
+                        .put("success", true)
+                        .put("pages", pages))));
+    }
+
+    private void apiReply(RoutingContext context, int statusCode, JsonObject payload) {
+        context.response()
+                .setStatusCode(statusCode)
+                .putHeader("Content-Type", "application/json")
+                .end(payload.encode());
+    }
+
+    private static class ApiResponse {
+        final int statusCode;
+        final JsonObject payload;
+
+        ApiResponse(JsonObject payload) {
+            this(200, payload);
+        }
+
+        ApiResponse(int statusCode, JsonObject payload) {
+            this.statusCode = statusCode;
+            this.payload = payload;
+        }
+    }
+
+    private CompletableObserver apiCompletableObserver(RoutingContext context, int statusCode) {
+        return new CompletableObserver() {
+            @Override
+            public void onSubscribe(Disposable d) {
+            }
+
+            @Override
+            public void onComplete() {
+                apiReply(context, statusCode, new JsonObject()
+                        .put("success", true));
+            }
+
+            @Override
+            public void onError(Throwable e) {
+                LOGGER.error("failed to fulfill request", e);
+                apiReply(context, 500, new JsonObject()
+                        .put("success", false)
+                        .put("error", e.getMessage()));
+            }
+        };
+    }
+
+    private <T> SingleObserver<T> apiSingleObserver(RoutingContext context, Function<T, ApiResponse> f) {
+        return new SingleObserver<>() {
+            @Override
+            public void onSubscribe(Disposable d) {
+            }
+
+            @Override
+            public void onSuccess(T t) {
+                ApiResponse response = f.apply(t);
+                apiReply(context, response.statusCode, response.payload);
+            }
+
+            @Override
+            public void onError(Throwable e) {
+                LOGGER.error("failed to fulfill request", e);
+                apiReply(context, 500, new JsonObject()
+                        .put("success", false)
+                        .put("error", e.getMessage()));
+            }
+        };
+    }
+
     private void backupHandler(RoutingContext context) {
         dbService.rxFetchAllPagesData()
                 .map(rows -> rows.stream()
@@ -92,11 +242,15 @@ public class HttpServerVerticle extends AbstractVerticle {
                             .putHeader("Content-Type", "application/json")
                             .as(BodyCodec.jsonObject())
                             .rxSendJsonObject(payload);
-                }).subscribe(new DisposableSingleObserver<>() {
+                }).subscribe(new SingleObserver<>() {
+            @Override
+            public void onSubscribe(Disposable d) {
+            }
+
             @Override
             public void onSuccess(HttpResponse<JsonObject> response) {
                 JsonObject body = response.body();
-                if(response.statusCode() == 200) {
+                if (response.statusCode() == 200) {
                     String id = body.getString("id");
                     context.put("backup_gist_url", "https://glot.io/snippets/" + id);
                     // redirect?
@@ -105,7 +259,7 @@ public class HttpServerVerticle extends AbstractVerticle {
                     StringBuilder messageBuilder = new StringBuilder()
                             .append("Could not backup the wiki: ")
                             .append(response.statusMessage());
-                    if(body != null) {
+                    if (body != null) {
                         messageBuilder
                                 .append("\n")
                                 .append(body.encodePrettily());
@@ -186,41 +340,45 @@ public class HttpServerVerticle extends AbstractVerticle {
                 }).subscribe(renderHtmlObserver(context));
     }
 
-    private static DisposableCompletableObserver redirectObserver(final RoutingContext context, final String location) {
-        return new DisposableCompletableObserver() {
+    private static CompletableObserver redirectObserver(final RoutingContext context, final String location) {
+        return new CompletableObserver() {
+            @Override
+            public void onSubscribe(Disposable d) {
+            }
+
             @Override
             public void onComplete() {
                 context.response()
                         .setStatusCode(303)
                         .putHeader("Location", location)
                         .end();
-                dispose();
             }
 
             @Override
             public void onError(Throwable e) {
                 LOGGER.error("failed to fulfill request", e);
                 context.fail(e);
-                dispose();
             }
         };
     }
 
-    private static DisposableSingleObserver<Buffer> renderHtmlObserver(final RoutingContext context) {
-        return new DisposableSingleObserver<>() {
+    private static SingleObserver<Buffer> renderHtmlObserver(final RoutingContext context) {
+        return new SingleObserver<>() {
+            @Override
+            public void onSubscribe(Disposable d) {
+            }
+
             @Override
             public void onSuccess(Buffer buffer) {
                 context.response()
                         .putHeader("Content-Type", "text/html")
                         .end(buffer);
-                dispose();
             }
 
             @Override
             public void onError(Throwable e) {
                 LOGGER.error("failed to fulfill request", e);
                 context.fail(e);
-                dispose();
             }
         };
     }

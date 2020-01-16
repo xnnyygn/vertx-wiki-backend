@@ -97,6 +97,17 @@ public class WikiDatabaseService {
     });
   }
 
+  public in.xnnyygn.vertx.wiki.database.reactivex.WikiDatabaseService fetchPageById(int id, Handler<AsyncResult<JsonObject>> resultHandler) { 
+    delegate.fetchPageById(id, resultHandler);
+    return this;
+  }
+
+  public Single<JsonObject> rxFetchPageById(int id) { 
+    return io.vertx.reactivex.impl.AsyncResultSingle.toSingle(handler -> {
+      fetchPageById(id, handler);
+    });
+  }
+
   public in.xnnyygn.vertx.wiki.database.reactivex.WikiDatabaseService createPage(String title, String markdown, Handler<AsyncResult<Void>> resultHandler) { 
     delegate.createPage(title, markdown, resultHandler);
     return this;

@@ -39,6 +39,7 @@ public class WikiDatabaseVerticle extends AbstractVerticle {
         sqlQueries.put(SqlQuery.ALL_PAGES, props.getProperty("all-pages"));
         sqlQueries.put(SqlQuery.ALL_PAGES_DATA, props.getProperty("all-pages-data"));
         sqlQueries.put(SqlQuery.GET_PAGE, props.getProperty("get-page"));
+        sqlQueries.put(SqlQuery.GET_PAGE_BY_ID, props.getProperty("get-page-by-id"));
         sqlQueries.put(SqlQuery.CREATE_PAGE, props.getProperty("create-page"));
         sqlQueries.put(SqlQuery.SAVE_PAGE, props.getProperty("save-page"));
         sqlQueries.put(SqlQuery.DELETE_PAGE, props.getProperty("delete-page"));

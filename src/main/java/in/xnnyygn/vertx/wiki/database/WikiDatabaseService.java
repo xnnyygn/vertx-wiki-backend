@@ -14,7 +14,9 @@ import io.vertx.reactivex.ext.jdbc.JDBCClient;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
+@SuppressWarnings("UnusedReturnValue")
 @ProxyGen
 @VertxGen
 public interface WikiDatabaseService {
@@ -32,6 +34,9 @@ public interface WikiDatabaseService {
 
   @Fluent
   WikiDatabaseService fetchPage(String name, Handler<AsyncResult<JsonObject>> resultHandler);
+
+  @Fluent
+  WikiDatabaseService fetchPageById(int id, Handler<AsyncResult<JsonObject>> resultHandler);
 
   @Fluent
   WikiDatabaseService createPage(String title, String markdown, Handler<AsyncResult<Void>> resultHandler);
