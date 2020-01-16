@@ -37,6 +37,7 @@ public class WikiDatabaseVerticle extends AbstractVerticle {
         Map<SqlQuery, String> sqlQueries = new HashMap<>();
         sqlQueries.put(SqlQuery.CREATE_PAGES_TABLE, props.getProperty("create-pages-table"));
         sqlQueries.put(SqlQuery.ALL_PAGES, props.getProperty("all-pages"));
+        sqlQueries.put(SqlQuery.ALL_PAGES_DATA, props.getProperty("all-pages-data"));
         sqlQueries.put(SqlQuery.GET_PAGE, props.getProperty("get-page"));
         sqlQueries.put(SqlQuery.CREATE_PAGE, props.getProperty("create-page"));
         sqlQueries.put(SqlQuery.SAVE_PAGE, props.getProperty("save-page"));
@@ -54,7 +55,7 @@ public class WikiDatabaseVerticle extends AbstractVerticle {
     }
 
     @Override
-    public int read() throws IOException {
+    public int read() {
       if (position >= buffer.length()) {
         return -1;
       }
@@ -63,7 +64,7 @@ public class WikiDatabaseVerticle extends AbstractVerticle {
   }
 
   @Override
-  public void start(Promise<Void> startPromise) throws Exception {
+  public void start(Promise<Void> startPromise) {
     JDBCClient dbClient = JDBCClient.createShared(vertx, new JsonObject()
       .put("url", config().getString(CONFIG_WIKIDB_JDBC_URL, "jdbc:hsqldb:file:db/wiki"))
       .put("driver_class", config().getString(CONFIG_WIKIDB_JDBC_DRIVER_CLASS, "org.hsqldb.jdbcDriver"))
@@ -71,7 +72,7 @@ public class WikiDatabaseVerticle extends AbstractVerticle {
 
     rxLoadSqlQueries()
       .flatMap(sqlQueries -> WikiDatabaseService.rxCreate(dbClient, sqlQueries))
-      .subscribe(new DisposableSingleObserver<WikiDatabaseService>() {
+      .subscribe(new DisposableSingleObserver<>() {
         @Override
         public void onSuccess(WikiDatabaseService wikiDatabaseService) {
           ServiceBinder binder = new ServiceBinder(vertx.getDelegate());

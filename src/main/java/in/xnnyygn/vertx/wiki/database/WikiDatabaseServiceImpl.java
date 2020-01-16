@@ -5,6 +5,7 @@ import io.vertx.core.AsyncResult;
 import io.vertx.core.Handler;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
+import io.vertx.ext.sql.ResultSet;
 import io.vertx.reactivex.CompletableHelper;
 import io.vertx.reactivex.SingleHelper;
 import io.vertx.reactivex.ext.jdbc.JDBCClient;
@@ -12,6 +13,7 @@ import io.vertx.reactivex.ext.sql.SQLConnection;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.List;
 import java.util.Map;
 
 public class WikiDatabaseServiceImpl implements WikiDatabaseService {
@@ -66,6 +68,14 @@ public class WikiDatabaseServiceImpl implements WikiDatabaseService {
           .sorted()
           .collect(JsonArray::new, JsonArray::add, JsonArray::addAll))
       .subscribe(SingleHelper.toObserver(resultHandler));
+    return this;
+  }
+
+  @Override
+  public WikiDatabaseService fetchAllPagesData(Handler<AsyncResult<List<JsonObject>>> resultHandler) {
+    dbClient.rxQuery(sqlQueries.get(SqlQuery.ALL_PAGES_DATA))
+            .map(ResultSet::getRows)
+            .subscribe(SingleHelper.toObserver(resultHandler));
     return this;
   }
 

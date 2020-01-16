@@ -27,6 +27,8 @@
   </div>
 </div>
 
+<a href="/backup" class="btn btn-default">Backup</a>
+
 <#include "footer.ftl">
 
 

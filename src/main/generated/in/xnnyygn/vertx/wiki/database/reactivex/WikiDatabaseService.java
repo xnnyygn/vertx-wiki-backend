@@ -23,6 +23,7 @@ import io.reactivex.Single;
 import io.reactivex.Completable;
 import io.reactivex.Maybe;
 import io.vertx.core.json.JsonArray;
+import java.util.List;
 import io.vertx.core.json.JsonObject;
 import io.vertx.core.AsyncResult;
 import io.vertx.core.Handler;
@@ -71,6 +72,17 @@ public class WikiDatabaseService {
   public Single<JsonArray> rxFetchAllPages() { 
     return io.vertx.reactivex.impl.AsyncResultSingle.toSingle(handler -> {
       fetchAllPages(handler);
+    });
+  }
+
+  public in.xnnyygn.vertx.wiki.database.reactivex.WikiDatabaseService fetchAllPagesData(Handler<AsyncResult<List<JsonObject>>> resultHandler) { 
+    delegate.fetchAllPagesData(resultHandler);
+    return this;
+  }
+
+  public Single<List<JsonObject>> rxFetchAllPagesData() { 
+    return io.vertx.reactivex.impl.AsyncResultSingle.toSingle(handler -> {
+      fetchAllPagesData(handler);
     });
   }
 
