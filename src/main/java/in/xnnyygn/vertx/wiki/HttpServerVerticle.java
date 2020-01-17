@@ -8,10 +8,12 @@ import io.reactivex.Single;
 import io.reactivex.SingleObserver;
 import io.reactivex.disposables.Disposable;
 import io.vertx.core.Promise;
-import io.vertx.core.http.HttpServerOptions;
+import io.vertx.core.impl.NoStackTraceThrowable;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
-import io.vertx.core.net.JksOptions;
+import io.vertx.ext.auth.KeyStoreOptions;
+import io.vertx.ext.auth.jwt.JWTAuthOptions;
+import io.vertx.ext.jwt.JWTOptions;
 import io.vertx.ext.web.client.WebClientOptions;
 import io.vertx.reactivex.core.AbstractVerticle;
 import io.vertx.reactivex.core.buffer.Buffer;
@@ -19,6 +21,7 @@ import io.vertx.reactivex.core.http.HttpServer;
 import io.vertx.reactivex.core.http.HttpServerRequest;
 import io.vertx.reactivex.core.http.HttpServerResponse;
 import io.vertx.reactivex.ext.auth.jdbc.JDBCAuth;
+import io.vertx.reactivex.ext.auth.jwt.JWTAuth;
 import io.vertx.reactivex.ext.jdbc.JDBCClient;
 import io.vertx.reactivex.ext.web.Router;
 import io.vertx.reactivex.ext.web.RoutingContext;
@@ -94,8 +97,18 @@ public class HttpServerVerticle extends AbstractVerticle {
         router.post("/action/delete").handler(this::pageDeleteHandler);
 
         Router apiRouter = Router.router(vertx);
-        apiRouter.get("/pages").handler(this::apiRoot);
-        apiRouter.get("/pages/:id").handler(this::apiGetPage);
+
+        JWTAuth jwtAuth = JWTAuth.create(vertx, new JWTAuthOptions()
+                .setKeyStore(new KeyStoreOptions()
+                        .setPath("keystore.jceks")
+                        .setType("jceks")
+                        .setPassword("secret")));
+
+        apiRouter.route().handler(JWTAuthHandler.create(jwtAuth, "/api/token"));
+
+        apiRouter.get("/token").handler(c -> apiTokenHandler(c, auth, jwtAuth));
+        apiRouter.get("/pages").handler(this::apiRootHandler);
+        apiRouter.get("/pages/:id").handler(this::apiGetPageHandler);
         apiRouter.post().handler(BodyHandler.create());
         apiRouter.post("/pages").handler(this::apiCreateHandler);
         apiRouter.put().handler(BodyHandler.create());
@@ -124,6 +137,55 @@ public class HttpServerVerticle extends AbstractVerticle {
                 });
     }
 
+    private void apiTokenHandler(RoutingContext context, JDBCAuth auth, JWTAuth jwtAuth) {
+        HttpServerRequest request = context.request();
+        JsonObject creds = new JsonObject()
+                .put("username", request.getHeader("login"))
+                .put("password", request.getHeader("password"));
+        auth.rxAuthenticate(creds)
+                .flatMap(user -> Single.zip(
+                        user.rxIsAuthorized("create"),
+                        user.rxIsAuthorized("delete"),
+                        user.rxIsAuthorized("update"),
+                        (canCreate, canDelete, canUpdate) -> jwtAuth.generateToken(
+                                new JsonObject()
+                                        .put("username", request.getHeader("login"))
+                                        .put("canCreate", canCreate)
+                                        .put("canDelete", canDelete)
+                                        .put("canUpdate", canUpdate),
+                                new JWTOptions()
+                                        .setSubject("Wiki API")
+                                        .setIssuer("Vert.x")
+                        )
+                ))
+                .subscribe(new SingleObserver<>() {
+                    @Override
+                    public void onSubscribe(Disposable d) {
+                    }
+
+                    @Override
+                    public void onSuccess(String token) {
+                        context.response()
+                                .setStatusCode(200)
+                                .putHeader("Content-Type", "text/plain")
+                                .end(token);
+                    }
+
+                    @Override
+                    public void onError(Throwable e) {
+                        String message = e.getMessage();
+                        if (e instanceof NoStackTraceThrowable && !"Failure in authentication".equals(message)) {
+                            LOGGER.warn("failed to authenticate, cause {}", message);
+                            context.fail(401);
+                        } else {
+                            apiReply(context, 500, new JsonObject()
+                                    .put("success", false)
+                                    .put("error", message));
+                        }
+                    }
+                });
+    }
+
     private void logoutHandler(RoutingContext context) {
         context.clearUser();
         redirect(context, "/");
@@ -136,6 +198,10 @@ public class HttpServerVerticle extends AbstractVerticle {
     }
 
     private void apiDeletePage(RoutingContext context) {
+        if(!context.user().principal().getBoolean("canDelete", false)) {
+            context.fail(403);
+            return;
+        }
         int id = Integer.parseInt(context.request().getParam("id"));
         dbService.rxDeletePage(id)
                 .subscribe(apiCompletableObserver(context, 204));
@@ -173,7 +239,7 @@ public class HttpServerVerticle extends AbstractVerticle {
         return Arrays.stream(expectedKeys).allMatch(page::containsKey);
     }
 
-    private void apiGetPage(RoutingContext context) {
+    private void apiGetPageHandler(RoutingContext context) {
         int id = Integer.parseInt(context.request().getParam("id"));
         dbService.rxFetchPageById(id)
                 .subscribe(apiSingleObserver(context, row -> {
@@ -194,7 +260,7 @@ public class HttpServerVerticle extends AbstractVerticle {
                 }));
     }
 
-    private void apiRoot(RoutingContext context) {
+    private void apiRootHandler(RoutingContext context) {
         dbService.rxFetchAllPagesData()
                 .map(rows -> rows.stream()
                         .map(row -> new JsonObject()

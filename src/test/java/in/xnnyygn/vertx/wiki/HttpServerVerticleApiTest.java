@@ -31,7 +31,8 @@ public class HttpServerVerticleApiTest {
                 .put(DatabaseConstants.CONFIG_WIKIDB_JDBC_URL, "jdbc:hsqldb:mem:testdb;shutdown=true")
                 .put(DatabaseConstants.CONFIG_WIKIDB_JDBC_MAX_POOL_SIZE, 4);
 
-        VertxUtils.rxDeployVerticle(vertx, new WikiDatabaseVerticle(), new DeploymentOptions().setConfig(conf))
+        VertxUtils.rxDeployVerticle(vertx, new AuthInitializerVerticle(), new DeploymentOptions().setConfig(conf))
+                .flatMap(id -> VertxUtils.rxDeployVerticle(vertx, new WikiDatabaseVerticle(), new DeploymentOptions().setConfig(conf)))
                 .flatMap(id -> VertxUtils.rxDeployVerticle(vertx, new HttpServerVerticle()))
                 .ignoreElement()
                 .blockingAwait();
@@ -40,8 +41,37 @@ public class HttpServerVerticleApiTest {
     }
 
     @Test
+    public void testApiToken() {
+        HttpRequest<Buffer> request = client.get(8080, "localhost", "/api/token")
+                .putHeader("login", "foo")
+                .putHeader("password", "bar");
+        HttpResponse<Buffer> response = WebClientUtils.rxSend(request).blockingGet();
+        assertEquals(200, response.statusCode());
+        assertEquals("text/plain", response.getHeader("Content-Type"));
+        assertTrue(response.body().length() > 0);
+    }
+
+    @Test
+    public void testApiTokenAuthFailed() {
+        HttpRequest<Buffer> request = client.get(8080, "localhost", "/api/token")
+                .putHeader("login", "foo")
+                .putHeader("password", "xxx");
+        HttpResponse<Buffer> response = WebClientUtils.rxSend(request).blockingGet();
+        assertEquals(401, response.statusCode());
+    }
+
+    private String generateToken() {
+        HttpRequest<Buffer> request = client.get(8080, "localhost", "/api/token")
+                .putHeader("login", "foo")
+                .putHeader("password", "bar");
+        HttpResponse<Buffer> response = WebClientUtils.rxSend(request).blockingGet();
+        return response.bodyAsString();
+    }
+
+    @Test
     public void testApiRootEmpty() {
-        HttpRequest<Buffer> request = client.get(8080, "localhost", "/api/pages");
+        HttpRequest<Buffer> request = client.get(8080, "localhost", "/api/pages")
+                .putHeader("Authorization", "Bearer " + generateToken());
         HttpResponse<Buffer> response = WebClientUtils.rxSend(request).blockingGet();
         assertEquals(200, response.statusCode());
         JsonObject bodyJson = response.bodyAsJsonObject();
@@ -52,6 +82,7 @@ public class HttpServerVerticleApiTest {
     @Test
     public void testApiCreatePageBadRequest() {
         HttpRequest<Buffer> request = client.post(8080, "localhost", "/api/pages")
+                .putHeader("Authorization", "Bearer " + generateToken())
                 .putHeader("Content-Type", "application/json");
         HttpResponse<Buffer> response = WebClientUtils.rxSendJsonObject(request, new JsonObject()).blockingGet();
         assertEquals(400, response.statusCode());
@@ -63,6 +94,7 @@ public class HttpServerVerticleApiTest {
     @Test
     public void testApiCreatePage() {
         HttpRequest<Buffer> request = client.post(8080, "localhost", "/api/pages")
+                .putHeader("Authorization", "Bearer " + generateToken())
                 .putHeader("Content-Type", "application/json");
         JsonObject payload = new JsonObject()
                 .put("name", "test")
@@ -71,8 +103,9 @@ public class HttpServerVerticleApiTest {
         assertEquals(201, response.statusCode());
     }
 
-    private void createPage(String name, String content) {
+    private void createPage(String name, String content, String token) {
         HttpRequest<Buffer> request = client.post(8080, "localhost", "/api/pages")
+                .putHeader("Authorization", "Bearer " + token)
                 .putHeader("Content-Type", "application/json");
         JsonObject payload = new JsonObject()
                 .put("name", name)
@@ -83,7 +116,8 @@ public class HttpServerVerticleApiTest {
 
     @Test
     public void testGetPageNotFound() {
-        HttpRequest<Buffer> request = client.get(8080, "localhost", "/api/pages/1");
+        HttpRequest<Buffer> request = client.get(8080, "localhost", "/api/pages/1")
+                .putHeader("Authorization", "Bearer " + generateToken());
         HttpResponse<Buffer> response = WebClientUtils.rxSend(request).blockingGet();
         assertEquals(404, response.statusCode());
         JsonObject bodyJson = response.bodyAsJsonObject();
@@ -93,6 +127,7 @@ public class HttpServerVerticleApiTest {
     @Test
     public void testApiUpdatePageBadRequest() {
         HttpRequest<Buffer> request = client.put(8080, "localhost", "/api/pages/1")
+                .putHeader("Authorization", "Bearer " + generateToken())
                 .putHeader("Content-Type", "application/json");
         HttpResponse<Buffer> response = WebClientUtils.rxSendJsonObject(request, new JsonObject()).blockingGet();
         assertEquals(400, response.statusCode());
@@ -103,9 +138,11 @@ public class HttpServerVerticleApiTest {
 
     @Test
     public void testAll() {
-        createPage("foo", "#foo");
+        String token = generateToken();
+        createPage("foo", "#foo", token);
 
-        HttpRequest<Buffer> apiRootRequest = client.get(8080, "localhost", "/api/pages");
+        HttpRequest<Buffer> apiRootRequest = client.get(8080, "localhost", "/api/pages")
+                .putHeader("Authorization", "Bearer " + token);
         HttpResponse<Buffer> apiRootResponse = WebClientUtils.rxSend(apiRootRequest).blockingGet();
         assertEquals(200, apiRootResponse.statusCode());
         JsonObject apiRootBodyJson = apiRootResponse.bodyAsJsonObject();
@@ -116,7 +153,8 @@ public class HttpServerVerticleApiTest {
         assertEquals("foo", page0.getString("name"));
         int pageId = page0.getInteger("id");
 
-        HttpRequest<Buffer> apiGetPageRequest = client.get(8080, "localhost", "/api/pages/" + pageId);
+        HttpRequest<Buffer> apiGetPageRequest = client.get(8080, "localhost", "/api/pages/" + pageId)
+                .putHeader("Authorization", "Bearer " + token);
         HttpResponse<Buffer> apiGetPageResponse = WebClientUtils.rxSend(apiGetPageRequest).blockingGet();
         assertEquals(200, apiGetPageResponse.statusCode());
         JsonObject apiGetPageBodyJson = apiGetPageResponse.bodyAsJsonObject();
@@ -126,7 +164,8 @@ public class HttpServerVerticleApiTest {
         assertEquals("#foo", page.getString("markdown"));
         assertEquals("<h1>foo</h1>\n", page.getString("html"));
 
-        HttpRequest<Buffer> apiUpdateRequest = client.put(8080, "localhost", "/api/pages/" + pageId);
+        HttpRequest<Buffer> apiUpdateRequest = client.put(8080, "localhost", "/api/pages/" + pageId)
+                .putHeader("Authorization", "Bearer " + token);
         HttpResponse<Buffer> apiUpdateResponse = WebClientUtils.rxSendJsonObject(apiUpdateRequest, new JsonObject()
                 .put("content", "#bar")).blockingGet();
         assertEquals(200, apiUpdateResponse.statusCode());
@@ -134,7 +173,8 @@ public class HttpServerVerticleApiTest {
         apiGetPageResponse = WebClientUtils.rxSend(apiGetPageRequest).blockingGet();
         assertEquals("#bar", apiGetPageResponse.bodyAsJsonObject().getJsonObject("page").getString("markdown"));
 
-        HttpRequest<Buffer> apiDeleteRequest = client.delete(8080, "localhost", "/api/pages/" + pageId);
+        HttpRequest<Buffer> apiDeleteRequest = client.delete(8080, "localhost", "/api/pages/" + pageId)
+                .putHeader("Authorization", "Bearer " + token);
         HttpResponse<Buffer> apiDeleteResponse = WebClientUtils.rxSend(apiDeleteRequest).blockingGet();
         assertEquals(204, apiDeleteResponse.statusCode());
 
