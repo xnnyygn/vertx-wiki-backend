@@ -8,10 +8,10 @@ import io.vertx.ext.web.client.HttpResponse;
 
 public class WebClientUtils {
     public static Single<HttpResponse<Buffer>> rxSend(HttpRequest<Buffer> request) {
-        return SingleUtils.toSingle(request, HttpRequest::send);
+        return SourceUtils.toSingle(request::send);
     }
 
     public static Single<HttpResponse<Buffer>> rxSendJsonObject(HttpRequest<Buffer> request, JsonObject payload) {
-        return SingleUtils.toSingle(request, (r, h) -> r.sendJsonObject(payload, h));
+        return SourceUtils.toSingle(h -> request.sendJsonObject(payload, h));
     }
 }

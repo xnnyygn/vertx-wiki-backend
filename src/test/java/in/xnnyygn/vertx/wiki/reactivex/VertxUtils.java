@@ -7,22 +7,15 @@ import io.vertx.core.Verticle;
 import io.vertx.core.Vertx;
 
 public class VertxUtils {
-
     public static Single<String> rxDeployVerticle(Vertx vertx, Verticle verticle) {
-        return SingleUtils.toSingle(vertx, (v, h) -> v.deployVerticle(verticle, new DeploymentOptions(), h));
+        return SourceUtils.toSingle(h -> vertx.deployVerticle(verticle, new DeploymentOptions(), h));
     }
 
     public static Single<String> rxDeployVerticle(Vertx vertx, Verticle verticle, DeploymentOptions options) {
-        return SingleUtils.toSingle(vertx, (v, h) -> v.deployVerticle(verticle, options, h));
+        return SourceUtils.toSingle(h -> vertx.deployVerticle(verticle, options, h));
     }
 
     public static Completable rxClose(Vertx vertx) {
-        return Completable.create(emitter -> vertx.close(asyncResult -> {
-            if (asyncResult.succeeded()) {
-                emitter.onComplete();
-            } else {
-                emitter.onError(asyncResult.cause());
-            }
-        }));
+        return SourceUtils.toCompletable(vertx::close);
     }
 }

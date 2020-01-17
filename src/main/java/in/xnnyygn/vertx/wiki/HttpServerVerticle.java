@@ -6,8 +6,10 @@ import io.reactivex.CompletableObserver;
 import io.reactivex.SingleObserver;
 import io.reactivex.disposables.Disposable;
 import io.vertx.core.Promise;
+import io.vertx.core.http.HttpServerOptions;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
+import io.vertx.core.net.JksOptions;
 import io.vertx.ext.web.client.WebClientOptions;
 import io.vertx.reactivex.core.AbstractVerticle;
 import io.vertx.reactivex.core.buffer.Buffer;
@@ -48,7 +50,13 @@ public class HttpServerVerticle extends AbstractVerticle {
         String wikiDbQueue = config().getString(CONFIG_WIKIDB_QUEUE, "wikidb.queue");
         dbService = in.xnnyygn.vertx.wiki.database.WikiDatabaseService.createProxy(vertx.getDelegate(), wikiDbQueue);
 
-        HttpServer server = vertx.createHttpServer();
+        JksOptions jksOptions = new JksOptions()
+                .setPath("server-keystore.jks")
+                .setPassword("secret");
+        HttpServerOptions serverOptions = new HttpServerOptions()
+                .setSsl(true)
+                .setKeyStoreOptions(jksOptions);
+        HttpServer server = vertx.createHttpServer(serverOptions);
         Router router = Router.router(vertx);
         router.get("/").handler(this::indexHandler);
         router.get("/wiki/:page").handler(this::pageRenderingHandler);
