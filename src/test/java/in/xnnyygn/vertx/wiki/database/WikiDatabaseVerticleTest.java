@@ -1,86 +1,86 @@
 package in.xnnyygn.vertx.wiki.database;
 
-import io.reactivex.Single;
+import in.xnnyygn.vertx.wiki.reactivex.VertxUtils;
 import io.vertx.core.DeploymentOptions;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
-import io.vertx.ext.unit.TestContext;
-import io.vertx.ext.unit.junit.VertxUnitRunner;
-import io.vertx.reactivex.CompletableHelper;
-import io.vertx.reactivex.SingleHelper;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
-import org.junit.runner.RunWith;
 
-@SuppressWarnings("BeforeOrAfterWithIncorrectSignature")
-@RunWith(VertxUnitRunner.class)
+import java.util.List;
+
+import static org.junit.Assert.*;
+
 public class WikiDatabaseVerticleTest {
 
     private Vertx vertx;
     private in.xnnyygn.vertx.wiki.database.reactivex.WikiDatabaseService service;
 
     @Before
-    public void setUp(TestContext tc) {
+    public void setUp() {
         vertx = Vertx.vertx();
 
         JsonObject conf = new JsonObject()
-                .put(WikiDatabaseVerticle.CONFIG_WIKIDB_JDBC_URL, "jdbc:hsqldb:mem:testdb;shutdown=true")
-                .put(WikiDatabaseVerticle.CONFIG_WIKIDB_JDBC_MAX_POOL_SIZE, 4);
+                .put(DatabaseConstants.CONFIG_WIKIDB_JDBC_URL, "jdbc:hsqldb:mem:testdb;shutdown=true")
+                .put(DatabaseConstants.CONFIG_WIKIDB_JDBC_MAX_POOL_SIZE, 4);
 
-        vertx.deployVerticle(
-                new WikiDatabaseVerticle(),
-                new DeploymentOptions().setConfig(conf),
-                tc.asyncAssertSuccess(id ->
-                        service = WikiDatabaseService.createProxy(vertx, WikiDatabaseVerticle.CONFIG_WIKIDB_QUEUE)
-                )
-        );
+        DeploymentOptions deploymentOptions = new DeploymentOptions()
+                .setConfig(conf);
+        service = VertxUtils.rxDeployVerticle(vertx, new WikiDatabaseVerticle(), deploymentOptions)
+                .map(id -> WikiDatabaseService.createProxy(vertx, DatabaseConstants.CONFIG_WIKIDB_QUEUE))
+                .blockingGet();
     }
 
     @After
-    public void tearDown(TestContext tc) {
-        vertx.close(tc.asyncAssertSuccess());
+    public void tearDown() {
+        VertxUtils.rxClose(vertx)
+                .blockingAwait();
     }
 
     @Test
-    public void testCrud(TestContext tc) {
-        service.rxCreatePage("Test", "Some Content")
-                .andThen(Single.defer(() -> service.rxFetchPage("Test")))
-                .flatMap(json -> {
-                    tc.assertTrue(json.getBoolean("found"));
-                    tc.assertTrue(json.containsKey("id"));
-                    tc.assertEquals("Some Content", json.getString("content"));
-                    return Single.just(json.getInteger("id"));
-                })
-                .flatMap(id -> service.rxSavePage(id, "Yo!").andThen(Single.just(id)))
-                .flatMapCompletable(id -> service.rxDeletePage(id))
-                .subscribe(CompletableHelper.toObserver(tc.asyncAssertSuccess()));
+    public void testFetchPageById() {
+        JsonObject row = service.rxFetchPageById(1).blockingGet();
+        assertNull(row);
     }
 
     @Test
-    public void testUpdate(TestContext tc) {
-        service.rxCreatePage("Test", "Some Content")
-                .andThen(Single.defer(() -> service.rxFetchPage("Test")))
-                .flatMap(json -> Single.just(json.getInteger("id")))
-                .flatMapCompletable(id -> service.rxSavePage(id, "Yo!"))
-                .andThen(Single.defer(() -> service.rxFetchPage("Test")))
-                .subscribe(SingleHelper.toObserver(tc.asyncAssertSuccess(json ->
-                        tc.assertEquals("Yo!", json.getString("content"))
-                )));
+    public void testCrud() {
+        service.rxCreatePage("Test", "Some Content").blockingAwait();
+
+        JsonObject page = service.rxFetchPage("Test").blockingGet();
+        assertTrue(page.getBoolean("found"));
+        assertTrue(page.containsKey("id"));
+        assertEquals("Some Content", page.getString("content"));
+        Integer pageId = page.getInteger("id");
+
+        service.rxSavePage(pageId, "Yo!").blockingAwait();
+
+        service.rxDeletePage(pageId).blockingAwait();
     }
 
     @Test
-    public void testWikiNotFound(TestContext tc) {
-        service.rxFetchPage("Test2")
-                .subscribe(SingleHelper.toObserver(tc.asyncAssertSuccess(json ->
-                        tc.assertFalse(json.getBoolean("found"))
-                )));
+    public void testUpdate() {
+        service.rxCreatePage("Test", "Some Content").blockingAwait();
+
+        JsonObject page = service.rxFetchPage("Test").blockingGet();
+        Integer pageId = page.getInteger("id");
+
+        service.rxSavePage(pageId, "Yo!").blockingAwait();
+        page = service.rxFetchPage("Test").blockingGet();
+        assertEquals("Yo!", page.getString("content"));
     }
 
     @Test
-    public void testFetchAllPagesData(TestContext tc) {
-        service.rxCreatePage("Test", "Some Content")
-                .andThen(Single.defer(() -> service.rxFetchAllPagesData()))
-                .subscribe(SingleHelper.toObserver(tc.asyncAssertSuccess(System.out::println)));
+    public void testWikiNotFound() {
+        JsonObject page = service.rxFetchPage("Test2").blockingGet();
+        assertNull(page);
+    }
+
+    @Test
+    public void testFetchAllPagesData() {
+        service.rxCreatePage("Test", "Some Content").blockingAwait();
+        List<JsonObject> pages = service.rxFetchAllPagesData().blockingGet();
+        assertEquals(1, pages.size());
     }
 }

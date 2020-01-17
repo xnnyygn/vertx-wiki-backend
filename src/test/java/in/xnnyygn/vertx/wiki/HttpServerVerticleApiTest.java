@@ -1,5 +1,6 @@
 package in.xnnyygn.vertx.wiki;
 
+import in.xnnyygn.vertx.wiki.database.DatabaseConstants;
 import in.xnnyygn.vertx.wiki.database.WikiDatabaseVerticle;
 import in.xnnyygn.vertx.wiki.reactivex.VertxUtils;
 import in.xnnyygn.vertx.wiki.reactivex.WebClientUtils;
@@ -27,8 +28,8 @@ public class HttpServerVerticleApiTest {
         vertx = Vertx.vertx();
 
         JsonObject conf = new JsonObject()
-                .put(WikiDatabaseVerticle.CONFIG_WIKIDB_JDBC_URL, "jdbc:hsqldb:mem:testdb;shutdown=true")
-                .put(WikiDatabaseVerticle.CONFIG_WIKIDB_JDBC_MAX_POOL_SIZE, 4);
+                .put(DatabaseConstants.CONFIG_WIKIDB_JDBC_URL, "jdbc:hsqldb:mem:testdb;shutdown=true")
+                .put(DatabaseConstants.CONFIG_WIKIDB_JDBC_MAX_POOL_SIZE, 4);
 
         VertxUtils.rxDeployVerticle(vertx, new WikiDatabaseVerticle(), new DeploymentOptions().setConfig(conf))
                 .flatMap(id -> VertxUtils.rxDeployVerticle(vertx, new HttpServerVerticle()))

@@ -1,6 +1,9 @@
 package in.xnnyygn.vertx.wiki.database;
 
-import io.reactivex.*;
+import io.reactivex.Completable;
+import io.reactivex.CompletableTransformer;
+import io.reactivex.MaybeObserver;
+import io.reactivex.Single;
 import io.reactivex.disposables.Disposable;
 import io.vertx.core.AsyncResult;
 import io.vertx.core.Future;
@@ -17,11 +20,10 @@ import org.slf4j.LoggerFactory;
 
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 
 public class WikiDatabaseServiceImpl implements WikiDatabaseService {
 
-    private static final Logger LOGGER = LoggerFactory.getLogger(WikiDatabaseServiceImpl.class);
+    private static final Logger logger = LoggerFactory.getLogger(WikiDatabaseServiceImpl.class);
 
     private final JDBCClient dbClient;
     private final Map<SqlQuery, String> sqlQueries;
@@ -85,49 +87,75 @@ public class WikiDatabaseServiceImpl implements WikiDatabaseService {
     @Override
     public WikiDatabaseService fetchPage(String name, Handler<AsyncResult<JsonObject>> resultHandler) {
         dbClient.rxQuerySingleWithParams(sqlQueries.get(SqlQuery.GET_PAGE), new JsonArray().add(name))
-                .doOnSuccess(row -> LOGGER.debug("fetch page, row {}", row))
                 .map(row ->
                         new JsonObject()
                                 .put("found", true)
                                 .put("id", row.getInteger(0))
                                 .put("content", row.getString(1))
                 )
-                .toSingle(new JsonObject().put("found", false))
-                .subscribe(SingleHelper.toObserver(resultHandler));
+                .subscribe(maybeObserver(resultHandler));
         return this;
     }
 
     @Override
     public WikiDatabaseService fetchPageById(int id, Handler<AsyncResult<JsonObject>> resultHandler) {
-        // TODO replace SingleHelper with MaybeToSingleJsonObjectObserver
         dbClient.rxQuerySingleWithParams(sqlQueries.get(SqlQuery.GET_PAGE_BY_ID), new JsonArray().add(id))
                 .map(row -> new JsonObject()
                         .put("name", row.getString(0))
                         .put("content", row.getString(1)))
-                .subscribe(new MaybeObserver<>() {
-                    @Override
-                    public void onSubscribe(Disposable d) {
-                    }
-
-                    @Override
-                    public void onSuccess(JsonObject row) {
-                        row.put("found", true);
-                        resultHandler.handle(Future.succeededFuture(row));
-                    }
-
-                    @Override
-                    public void onError(Throwable e) {
-                        e.printStackTrace();
-                        resultHandler.handle(Future.failedFuture(e));
-                    }
-
-                    @Override
-                    public void onComplete() {
-                        JsonObject payload = new JsonObject().put("found", false);
-                        resultHandler.handle(Future.succeededFuture(payload));
-                    }
-                });
+                .subscribe(maybeObserver(resultHandler));
         return this;
+    }
+
+    private static MaybeObserver<JsonObject> maybeJsonFoundObserver(Handler<AsyncResult<JsonObject>> resultHandler) {
+        return new MaybeObserver<>() {
+            @Override
+            public void onSubscribe(Disposable d) {
+            }
+
+            @Override
+            public void onSuccess(JsonObject json) {
+                json.put("found", true);
+                resultHandler.handle(Future.succeededFuture(json));
+            }
+
+            @Override
+            public void onError(Throwable e) {
+                logger.error("failed", e);
+                resultHandler.handle(Future.failedFuture(e));
+            }
+
+            @Override
+            public void onComplete() {
+                JsonObject json = new JsonObject()
+                        .put("found", false);
+                resultHandler.handle(Future.succeededFuture(json));
+            }
+        };
+    }
+
+    private static <T> MaybeObserver<T> maybeObserver(Handler<AsyncResult<T>> resultHandler) {
+        return new MaybeObserver<>() {
+            @Override
+            public void onSubscribe(Disposable d) {
+            }
+
+            @Override
+            public void onSuccess(T t) {
+                resultHandler.handle(Future.succeededFuture(t));
+            }
+
+            @Override
+            public void onError(Throwable e) {
+                logger.error("failed", e);
+                resultHandler.handle(Future.failedFuture(e));
+            }
+
+            @Override
+            public void onComplete() {
+                resultHandler.handle(Future.succeededFuture());
+            }
+        };
     }
 
     @Override
@@ -151,13 +179,6 @@ public class WikiDatabaseServiceImpl implements WikiDatabaseService {
         dbClient.rxUpdateWithParams(sqlQueries.get(SqlQuery.DELETE_PAGE), new JsonArray().add(id))
                 .ignoreElement()
                 .subscribe(CompletableHelper.toObserver(resultHandler));
-
-//    String sql = sqlQueries.get(SqlQuery.DELETE_PAGE);
-//    JsonArray params = new JsonArray().add(id);
-//    dbClient.rxGetConnection()
-//      .flatMap(conn -> conn.rxUpdateWithParams(sql, params).compose(closeSingle(conn)))
-//      .ignoreElement()
-//      .subscribe(CompletableHelper.toObserver(resultHandler));
         return this;
     }
 }

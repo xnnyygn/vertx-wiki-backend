@@ -1,5 +1,6 @@
 package in.xnnyygn.vertx.wiki;
 
+import in.xnnyygn.vertx.wiki.database.DatabaseConstants;
 import in.xnnyygn.vertx.wiki.database.WikiDatabaseVerticle;
 import in.xnnyygn.vertx.wiki.reactivex.HttpClientUtils;
 import in.xnnyygn.vertx.wiki.reactivex.VertxUtils;
@@ -24,7 +25,8 @@ import org.junit.Test;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
-public class HttpServerVerticleTest {
+@Ignore
+public class HttpServerVerticleHttpsTest {
 
     private Vertx vertx;
     private WebClient client;
@@ -34,8 +36,8 @@ public class HttpServerVerticleTest {
         vertx = Vertx.vertx();
 
         JsonObject conf = new JsonObject()
-                .put(WikiDatabaseVerticle.CONFIG_WIKIDB_JDBC_URL, "jdbc:hsqldb:mem:testdb;shutdown=true")
-                .put(WikiDatabaseVerticle.CONFIG_WIKIDB_JDBC_MAX_POOL_SIZE, 4);
+                .put(DatabaseConstants.CONFIG_WIKIDB_JDBC_URL, "jdbc:hsqldb:mem:testdb;shutdown=true")
+                .put(DatabaseConstants.CONFIG_WIKIDB_JDBC_MAX_POOL_SIZE, 4);
 
         VertxUtils.rxDeployVerticle(vertx, new WikiDatabaseVerticle(), new DeploymentOptions().setConfig(conf))
                 .flatMap(id -> VertxUtils.rxDeployVerticle(vertx, new HttpServerVerticle()))
@@ -61,7 +63,6 @@ public class HttpServerVerticleTest {
     }
 
     @Test
-    @Ignore
     public void testRoot2() {
         JksOptions jksOptions = new JksOptions()
                 .setPath("server-keystore.jks")

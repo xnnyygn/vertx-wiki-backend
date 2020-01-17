@@ -1,8 +1,10 @@
 package in.xnnyygn.vertx.wiki;
 
 import com.github.rjeschke.txtmark.Processor;
+import in.xnnyygn.vertx.wiki.database.DatabaseConstants;
 import in.xnnyygn.vertx.wiki.database.reactivex.WikiDatabaseService;
 import io.reactivex.CompletableObserver;
+import io.reactivex.Single;
 import io.reactivex.SingleObserver;
 import io.reactivex.disposables.Disposable;
 import io.vertx.core.Promise;
@@ -15,18 +17,22 @@ import io.vertx.reactivex.core.AbstractVerticle;
 import io.vertx.reactivex.core.buffer.Buffer;
 import io.vertx.reactivex.core.http.HttpServer;
 import io.vertx.reactivex.core.http.HttpServerRequest;
+import io.vertx.reactivex.core.http.HttpServerResponse;
+import io.vertx.reactivex.ext.auth.jdbc.JDBCAuth;
+import io.vertx.reactivex.ext.jdbc.JDBCClient;
 import io.vertx.reactivex.ext.web.Router;
 import io.vertx.reactivex.ext.web.RoutingContext;
-import io.vertx.reactivex.ext.web.client.HttpResponse;
 import io.vertx.reactivex.ext.web.client.WebClient;
 import io.vertx.reactivex.ext.web.codec.BodyCodec;
-import io.vertx.reactivex.ext.web.handler.BodyHandler;
+import io.vertx.reactivex.ext.web.handler.*;
+import io.vertx.reactivex.ext.web.sstore.LocalSessionStore;
 import io.vertx.reactivex.ext.web.templ.freemarker.FreeMarkerTemplateEngine;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.Arrays;
 import java.util.Date;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -50,21 +56,42 @@ public class HttpServerVerticle extends AbstractVerticle {
         String wikiDbQueue = config().getString(CONFIG_WIKIDB_QUEUE, "wikidb.queue");
         dbService = in.xnnyygn.vertx.wiki.database.WikiDatabaseService.createProxy(vertx.getDelegate(), wikiDbQueue);
 
-        JksOptions jksOptions = new JksOptions()
-                .setPath("server-keystore.jks")
-                .setPassword("secret");
-        HttpServerOptions serverOptions = new HttpServerOptions()
-                .setSsl(true)
-                .setKeyStoreOptions(jksOptions);
-        HttpServer server = vertx.createHttpServer(serverOptions);
+        JDBCClient authDbClient = JDBCClient.createShared(vertx, new JsonObject()
+                .put("url", config().getString(DatabaseConstants.CONFIG_WIKIDB_JDBC_URL, DatabaseConstants.DEFAULT_WIKIDB_JDBC_URL))
+                .put("driver_class", config().getString(DatabaseConstants.CONFIG_WIKIDB_JDBC_DRIVER_CLASS, DatabaseConstants.DEFAULT_WIKIDB_JDBC_DRIVER_CLASS))
+                .put("max_pool_size", config().getInteger(DatabaseConstants.CONFIG_WIKIDB_JDBC_MAX_POOL_SIZE, DatabaseConstants.DEFAULT_JDBC_MAX_POOL_SIZE)));
+        JDBCAuth auth = JDBCAuth.create(vertx, authDbClient);
+
+//        JksOptions jksOptions = new JksOptions()
+//                .setPath("server-keystore.jks")
+//                .setPassword("secret");
+//        HttpServerOptions serverOptions = new HttpServerOptions()
+//                .setSsl(true)
+//                .setKeyStoreOptions(jksOptions);
+        HttpServer server = vertx.createHttpServer();
         Router router = Router.router(vertx);
+
+        router.route().handler(CookieHandler.create());
+        router.route().handler(BodyHandler.create());
+        router.route().handler(SessionHandler.create(LocalSessionStore.create(vertx)));
+        router.route().handler(UserSessionHandler.create(auth));
+
+        AuthHandler authHandler = RedirectAuthHandler.create(auth, "/login");
+        router.route("/").handler(authHandler);
+        router.route("/wiki/*").handler(authHandler);
+        router.route("/action/*").handler(authHandler);
+
+        router.get("/login").handler(this::loginHandler);
+        router.post("/login-auth").handler(FormLoginHandler.create(auth));
+        router.get("/logout").handler(this::logoutHandler);
+
         router.get("/").handler(this::indexHandler);
         router.get("/wiki/:page").handler(this::pageRenderingHandler);
-        router.get("/backup").handler(this::backupHandler);
+        router.get("/action/backup").handler(this::backupHandler);
         router.post().handler(BodyHandler.create());
-        router.post("/create").handler(this::pageCreateHandler);
-        router.post("/save").handler(this::pageSaveHandler);
-        router.post("/delete").handler(this::pageDeleteHandler);
+        router.post("/action/create").handler(this::pageCreateHandler);
+        router.post("/action/save").handler(this::pageSaveHandler);
+        router.post("/action/delete").handler(this::pageDeleteHandler);
 
         Router apiRouter = Router.router(vertx);
         apiRouter.get("/pages").handler(this::apiRoot);
@@ -95,6 +122,17 @@ public class HttpServerVerticle extends AbstractVerticle {
                         startPromise.fail(ar.cause());
                     }
                 });
+    }
+
+    private void logoutHandler(RoutingContext context) {
+        context.clearUser();
+        redirect(context, "/");
+    }
+
+    private void loginHandler(RoutingContext context) {
+        context.put("title", "Login");
+        templateEngine.rxRender(context.data(), "templates/login.ftl")
+                .subscribe(renderHtmlObserver(context));
     }
 
     private void apiDeletePage(RoutingContext context) {
@@ -139,7 +177,7 @@ public class HttpServerVerticle extends AbstractVerticle {
         int id = Integer.parseInt(context.request().getParam("id"));
         dbService.rxFetchPageById(id)
                 .subscribe(apiSingleObserver(context, row -> {
-                    if (!row.getBoolean("found")) {
+                    if (row == null) {
                         return new ApiResponse(404, new JsonObject()
                                 .put("success", false)
                                 .put("error", "page " + id + " not found"));
@@ -250,44 +288,55 @@ public class HttpServerVerticle extends AbstractVerticle {
                             .putHeader("Content-Type", "application/json")
                             .as(BodyCodec.jsonObject())
                             .rxSendJsonObject(payload);
-                }).subscribe(new SingleObserver<>() {
-            @Override
-            public void onSubscribe(Disposable d) {
-            }
-
-            @Override
-            public void onSuccess(HttpResponse<JsonObject> response) {
-                JsonObject body = response.body();
-                if (response.statusCode() == 200) {
-                    String id = body.getString("id");
-                    context.put("backup_gist_url", "https://glot.io/snippets/" + id);
-                    // redirect?
-                    indexHandler(context);
-                } else {
-                    StringBuilder messageBuilder = new StringBuilder()
-                            .append("Could not backup the wiki: ")
-                            .append(response.statusMessage());
-                    if (body != null) {
-                        messageBuilder
-                                .append("\n")
-                                .append(body.encodePrettily());
+                })
+                .subscribe(singleObserver(context, response -> {
+                    JsonObject body = response.body();
+                    if (response.statusCode() == 200) {
+                        String id = body.getString("id");
+                        context.put("backup_gist_url", "https://glot.io/snippets/" + id);
+                        // redirect?
+                        indexHandler(context);
+                    } else {
+                        StringBuilder messageBuilder = new StringBuilder()
+                                .append("Could not backup the wiki: ")
+                                .append(response.statusMessage());
+                        if (body != null) {
+                            messageBuilder
+                                    .append("\n")
+                                    .append(body.encodePrettily());
+                        }
+                        LOGGER.error(messageBuilder.toString());
+                        context.fail(502);
                     }
-                    LOGGER.error(messageBuilder.toString());
-                    context.fail(502);
-                }
-            }
+                }));
+    }
 
-            @Override
-            public void onError(Throwable e) {
-                context.fail(e);
-            }
-        });
+    private enum PageDeletionResult {
+        UNAUTHORIZED,
+        DONE
     }
 
     private void pageDeleteHandler(RoutingContext context) {
-        String id = context.request().getParam("id");
-        dbService.rxDeletePage(Integer.parseInt(id))
-                .subscribe(redirectObserver(context, "/"));
+        context.user().rxIsAuthorized("delete")
+                .flatMap(canDelete -> {
+                    if (!canDelete) {
+                        return Single.just(PageDeletionResult.UNAUTHORIZED);
+                    }
+                    String id = context.request().getParam("id");
+                    return dbService.rxDeletePage(Integer.parseInt(id))
+                            .toSingleDefault(PageDeletionResult.DONE);
+                })
+                .subscribe(singleObserver(context, result -> {
+                    HttpServerResponse response = context.response();
+                    if (result == PageDeletionResult.UNAUTHORIZED) {
+                        response.setStatusCode(403)
+                                .end();
+                    } else {
+                        response.setStatusCode(303)
+                                .putHeader("Location", "/")
+                                .end();
+                    }
+                }));
     }
 
     private void pageSaveHandler(RoutingContext context) {
@@ -322,12 +371,13 @@ public class HttpServerVerticle extends AbstractVerticle {
         String page = context.request().getParam("page");
         dbService.rxFetchPage(page)
                 .flatMap(json -> {
-                    boolean found = json.getBoolean("found");
-                    String rawContent = json.getString("content", EMPTY_PAGE_MARKDOWN);
-                    if (found) {
+                    String rawContent;
+                    if (json != null) {
+                        rawContent = json.getString("content");
                         context.put("id", json.getInteger("id"));
                         context.put("newPage", "no");
                     } else {
+                        rawContent = EMPTY_PAGE_MARKDOWN;
                         context.put("id", -1);
                         context.put("newPage", "yes");
                     }
@@ -336,16 +386,30 @@ public class HttpServerVerticle extends AbstractVerticle {
                     context.put("content", Processor.process(rawContent));
                     context.put("timestamp", new Date().toString());
                     return templateEngine.rxRender(context.data(), "templates/page.ftl");
-                }).subscribe(renderHtmlObserver(context));
+                })
+                .subscribe(renderHtmlObserver(context));
     }
 
     private void indexHandler(RoutingContext context) {
-        dbService.rxFetchAllPages()
+        context.user().rxIsAuthorized("create")
+                .flatMap(canCreate -> {
+                    context.put("canCreatePage", canCreate);
+                    return dbService.rxFetchAllPages();
+                })
                 .flatMap(pages -> {
                     context.put("title", "Wiki home");
+                    context.put("username", context.user().principal().getString("username"));
                     context.put("pages", pages.getList());
                     return templateEngine.rxRender(context.data(), "templates/index.ftl");
-                }).subscribe(renderHtmlObserver(context));
+                })
+                .subscribe(renderHtmlObserver(context));
+    }
+
+    private static void redirect(RoutingContext context, String location) {
+        context.response()
+                .setStatusCode(303)
+                .putHeader("Location", location)
+                .end();
     }
 
     private static CompletableObserver redirectObserver(final RoutingContext context, final String location) {
@@ -356,10 +420,7 @@ public class HttpServerVerticle extends AbstractVerticle {
 
             @Override
             public void onComplete() {
-                context.response()
-                        .setStatusCode(303)
-                        .putHeader("Location", location)
-                        .end();
+                redirect(context, location);
             }
 
             @Override
@@ -371,16 +432,20 @@ public class HttpServerVerticle extends AbstractVerticle {
     }
 
     private static SingleObserver<Buffer> renderHtmlObserver(final RoutingContext context) {
+        return singleObserver(context, buffer -> context.response()
+                .putHeader("Content-Type", "text/html")
+                .end(buffer));
+    }
+
+    private static <T> SingleObserver<T> singleObserver(final RoutingContext context, Consumer<T> f) {
         return new SingleObserver<>() {
             @Override
             public void onSubscribe(Disposable d) {
             }
 
             @Override
-            public void onSuccess(Buffer buffer) {
-                context.response()
-                        .putHeader("Content-Type", "text/html")
-                        .end(buffer);
+            public void onSuccess(T t) {
+                f.accept(t);
             }
 
             @Override
