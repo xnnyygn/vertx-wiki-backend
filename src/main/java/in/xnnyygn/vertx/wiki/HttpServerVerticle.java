@@ -88,7 +88,10 @@ public class HttpServerVerticle extends AbstractVerticle {
         router.post("/login-auth").handler(FormLoginHandler.create(auth));
         router.get("/logout").handler(this::logoutHandler);
 
-        router.get("/").handler(this::indexHandler);
+        router.get("/app/*").handler(StaticHandler.create().setCachingEnabled(false));
+        router.get("/").handler(c -> c.reroute("/app/index.html"));
+        router.post("/app/markdown").handler(this::appMarkdownHandler);
+//        router.get("/").handler(this::indexHandler);
         router.get("/wiki/:page").handler(this::pageRenderingHandler);
         router.get("/action/backup").handler(this::backupHandler);
         router.post().handler(BodyHandler.create());
@@ -135,6 +138,14 @@ public class HttpServerVerticle extends AbstractVerticle {
                         startPromise.fail(ar.cause());
                     }
                 });
+    }
+
+    private void appMarkdownHandler(RoutingContext context) {
+        String html = Processor.process(context.getBodyAsString());
+        context.response()
+                .putHeader("Content-Type", "text/html")
+                .setStatusCode(200)
+                .end(html);
     }
 
     private void apiTokenHandler(RoutingContext context, JDBCAuth auth, JWTAuth jwtAuth) {
@@ -198,33 +209,36 @@ public class HttpServerVerticle extends AbstractVerticle {
     }
 
     private void apiDeletePage(RoutingContext context) {
-        if(!context.user().principal().getBoolean("canDelete", false)) {
-            context.fail(403);
-            return;
-        }
-        int id = Integer.parseInt(context.request().getParam("id"));
-        dbService.rxDeletePage(id)
-                .subscribe(apiCompletableObserver(context, 204));
+        context.user()
+                .rxIsAuthorized("delete")
+                .flatMap(canDelete -> {
+                    if (!canDelete) {
+                        return Single.just(403);
+                    }
+                    int id = Integer.parseInt(context.request().getParam("id"));
+                    return dbService.rxDeletePage(id).andThen(Single.just(204));
+                })
+                .subscribe(apiSingleObserver(context, ApiResponse::new));
     }
 
     private void apiUpdateHandler(RoutingContext context) {
         JsonObject page = context.getBodyAsJson();
-        if (!validateJsonPage(page, "content")) {
+        if (!validateJsonPage(page, "markdown")) {
             apiReplyBadRequest(context);
             return;
         }
         int id = Integer.parseInt(context.request().getParam("id"));
-        dbService.rxSavePage(id, page.getString("content"))
+        dbService.rxSavePage(id, page.getString(" markdown"))
                 .subscribe(apiCompletableObserver(context, 200));
     }
 
     private void apiCreateHandler(RoutingContext context) {
         JsonObject page = context.getBodyAsJson();
-        if (!validateJsonPage(page, "name", "content")) {
+        if (!validateJsonPage(page, "name", "markdown")) {
             apiReplyBadRequest(context);
             return;
         }
-        dbService.rxCreatePage(page.getString("name"), page.getString("content"))
+        dbService.rxCreatePage(page.getString("name"), page.getString("markdown"))
                 .subscribe(apiCompletableObserver(context, 201));
     }
 
@@ -273,10 +287,19 @@ public class HttpServerVerticle extends AbstractVerticle {
     }
 
     private void apiReply(RoutingContext context, int statusCode, JsonObject payload) {
-        context.response()
-                .setStatusCode(statusCode)
-                .putHeader("Content-Type", "application/json")
-                .end(payload.encode());
+        switch (statusCode) {
+            case 403:
+                context.fail(403);
+                break;
+            case 204:
+                context.response().setStatusCode(204).end();
+                break;
+            default:
+                context.response()
+                        .setStatusCode(statusCode)
+                        .putHeader("Content-Type", "application/json")
+                        .end(payload.encode());
+        }
     }
 
     private static class ApiResponse {
@@ -287,10 +310,15 @@ public class HttpServerVerticle extends AbstractVerticle {
             this(200, payload);
         }
 
+        ApiResponse(int statusCode) {
+            this(statusCode, null);
+        }
+
         ApiResponse(int statusCode, JsonObject payload) {
             this.statusCode = statusCode;
             this.payload = payload;
         }
+
     }
 
     private CompletableObserver apiCompletableObserver(RoutingContext context, int statusCode) {
