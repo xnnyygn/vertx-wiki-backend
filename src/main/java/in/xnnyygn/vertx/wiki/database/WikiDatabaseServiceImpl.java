@@ -1,5 +1,6 @@
 package in.xnnyygn.vertx.wiki.database;
 
+import in.xnnyygn.vertx.wiki.SQLConnectionUtils;
 import io.reactivex.Completable;
 import io.reactivex.CompletableTransformer;
 import io.reactivex.MaybeObserver;
@@ -46,7 +47,7 @@ public class WikiDatabaseServiceImpl implements WikiDatabaseService {
         return dbClient.rxGetConnection()
                 .flatMap(conn ->
                         conn.rxExecute(sqlQueries.get(SqlQuery.CREATE_PAGES_TABLE))
-                                .compose(closeCompletable(conn))
+                                .compose(SQLConnectionUtils.closeCompletable(conn))
                                 .andThen(Single.just(this))
                 );
     }
@@ -56,12 +57,6 @@ public class WikiDatabaseServiceImpl implements WikiDatabaseService {
 //      .onErrorResumeNext(e -> conn.rxClose().andThen(Single.error(e)))
 //      .flatMap(x -> conn.rxClose().andThen(Single.just(x)));
 //  }
-
-    private static CompletableTransformer closeCompletable(SQLConnection conn) {
-        return upstream -> upstream
-                .onErrorResumeNext(e -> conn.rxClose().andThen(Completable.error(e)))
-                .andThen(Completable.defer(conn::rxClose));
-    }
 
     @Override
     public WikiDatabaseService fetchAllPages(Handler<AsyncResult<JsonArray>> resultHandler) {

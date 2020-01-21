@@ -2,7 +2,6 @@ package in.xnnyygn.vertx.wiki;
 
 import in.xnnyygn.vertx.wiki.database.DatabaseConstants;
 import io.reactivex.Completable;
-import io.reactivex.Single;
 import io.vertx.core.json.JsonObject;
 import io.vertx.reactivex.core.AbstractVerticle;
 import io.vertx.reactivex.ext.jdbc.JDBCClient;
@@ -56,9 +55,8 @@ public class AuthInitializerVerticle extends AbstractVerticle {
 
         return dbClient.rxGetConnection()
                 .flatMapCompletable(conn ->
-                        conn.rxBatch(schemaCreation).ignoreElement()
-                                .onErrorResumeNext(e -> conn.rxClose().andThen(Completable.error(e)))
-                                .andThen(Single.defer(() -> conn.rxQuery("select count(*) from user")))
+                        conn.rxBatch(schemaCreation)
+                                .flatMap(l -> conn.rxQuery("select count(*) from user"))
                                 .map(rs -> rs.getResults().get(0).getInteger(0))
                                 .flatMapCompletable(userCount -> {
                                     if (userCount > 0) {
@@ -68,7 +66,7 @@ public class AuthInitializerVerticle extends AbstractVerticle {
                                     logger.info("insert users");
                                     return conn.rxBatch(dataInit).ignoreElement();
                                 })
-                                .andThen(Completable.defer(conn::rxClose))
+                                .compose(SQLConnectionUtils.closeCompletable(conn))
                 )
                 .doOnComplete(() -> logger.info("successfully inserted data"))
                 .doOnError(e -> logger.error("failed to insert data", e));
