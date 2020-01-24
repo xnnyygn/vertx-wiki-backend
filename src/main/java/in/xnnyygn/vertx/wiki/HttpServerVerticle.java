@@ -13,8 +13,10 @@ import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.auth.KeyStoreOptions;
 import io.vertx.ext.auth.jwt.JWTAuthOptions;
+import io.vertx.ext.bridge.PermittedOptions;
 import io.vertx.ext.jwt.JWTOptions;
 import io.vertx.ext.web.client.WebClientOptions;
+import io.vertx.ext.web.handler.sockjs.BridgeOptions;
 import io.vertx.reactivex.core.AbstractVerticle;
 import io.vertx.reactivex.core.buffer.Buffer;
 import io.vertx.reactivex.core.http.HttpServer;
@@ -28,6 +30,7 @@ import io.vertx.reactivex.ext.web.RoutingContext;
 import io.vertx.reactivex.ext.web.client.WebClient;
 import io.vertx.reactivex.ext.web.codec.BodyCodec;
 import io.vertx.reactivex.ext.web.handler.*;
+import io.vertx.reactivex.ext.web.handler.sockjs.SockJSHandler;
 import io.vertx.reactivex.ext.web.sstore.LocalSessionStore;
 import io.vertx.reactivex.ext.web.templ.freemarker.FreeMarkerTemplateEngine;
 import org.slf4j.Logger;
@@ -73,6 +76,15 @@ public class HttpServerVerticle extends AbstractVerticle {
 //                .setKeyStoreOptions(jksOptions);
         HttpServer server = vertx.createHttpServer();
         Router router = Router.router(vertx);
+
+        SockJSHandler sockJSHandler = SockJSHandler.create(vertx);
+        BridgeOptions bridgeOptions = new BridgeOptions()
+                .addInboundPermitted(new PermittedOptions().setAddress("app.markdown"))
+                .addOutboundPermitted(new PermittedOptions().setAddress("page.saved"));
+        sockJSHandler.bridge(bridgeOptions);
+        router.route("/eventbus/*").handler(sockJSHandler);
+
+        vertx.eventBus().<String>consumer("app.markdown", msg -> msg.reply(Processor.process(msg.body())));
 
         router.route().handler(CookieHandler.create());
         router.route().handler(BodyHandler.create());
@@ -223,13 +235,23 @@ public class HttpServerVerticle extends AbstractVerticle {
 
     private void apiUpdateHandler(RoutingContext context) {
         JsonObject page = context.getBodyAsJson();
+        LOGGER.debug("body {}", page);
         if (!validateJsonPage(page, "markdown")) {
             apiReplyBadRequest(context);
             return;
         }
         int id = Integer.parseInt(context.request().getParam("id"));
-        dbService.rxSavePage(id, page.getString(" markdown"))
-                .subscribe(apiCompletableObserver(context, 200));
+        String markdown = page.getString("markdown");
+        dbService.rxSavePage(id, markdown)
+                .subscribe(apiCompletableObserver(context, () -> {
+                    // publish event
+                    JsonObject event = new JsonObject()
+                            .put("id", id)
+                            .put("client", page.getString("client"));
+                    LOGGER.debug("publish event {}", event);
+                    vertx.eventBus().publish("page.saved", event);
+                    apiReplySuccess(context, 200);
+                }));
     }
 
     private void apiCreateHandler(RoutingContext context) {
@@ -286,6 +308,12 @@ public class HttpServerVerticle extends AbstractVerticle {
                         .put("pages", pages))));
     }
 
+    private void apiReplySuccess(RoutingContext context, int statusCode) {
+        JsonObject payload = new JsonObject()
+                .put("success", true);
+        apiReply(context, statusCode, payload);
+    }
+
     private void apiReply(RoutingContext context, int statusCode, JsonObject payload) {
         switch (statusCode) {
             case 403:
@@ -322,6 +350,10 @@ public class HttpServerVerticle extends AbstractVerticle {
     }
 
     private CompletableObserver apiCompletableObserver(RoutingContext context, int statusCode) {
+        return apiCompletableObserver(context, () -> apiReplySuccess(context, statusCode));
+    }
+
+    private CompletableObserver apiCompletableObserver(RoutingContext context, Runnable action) {
         return new CompletableObserver() {
             @Override
             public void onSubscribe(Disposable d) {
@@ -329,18 +361,21 @@ public class HttpServerVerticle extends AbstractVerticle {
 
             @Override
             public void onComplete() {
-                apiReply(context, statusCode, new JsonObject()
-                        .put("success", true));
+                action.run();
             }
 
             @Override
             public void onError(Throwable e) {
-                LOGGER.error("failed to fulfill request", e);
-                apiReply(context, 500, new JsonObject()
-                        .put("success", false)
-                        .put("error", e.getMessage()));
+                apiFailed(context, e);
             }
         };
+    }
+
+    private void apiFailed(RoutingContext context, Throwable t) {
+        LOGGER.error("failed to fulfill request", t);
+        apiReply(context, 500, new JsonObject()
+                .put("success", false)
+                .put("error", t.getMessage()));
     }
 
     private <T> SingleObserver<T> apiSingleObserver(RoutingContext context, Function<T, ApiResponse> f) {
@@ -357,10 +392,7 @@ public class HttpServerVerticle extends AbstractVerticle {
 
             @Override
             public void onError(Throwable e) {
-                LOGGER.error("failed to fulfill request", e);
-                apiReply(context, 500, new JsonObject()
-                        .put("success", false)
-                        .put("error", e.getMessage()));
+                apiFailed(context, e);
             }
         };
     }

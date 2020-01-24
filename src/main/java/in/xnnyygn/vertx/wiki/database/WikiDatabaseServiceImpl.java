@@ -155,6 +155,7 @@ public class WikiDatabaseServiceImpl implements WikiDatabaseService {
 
     @Override
     public WikiDatabaseService createPage(String title, String markdown, Handler<AsyncResult<Void>> resultHandler) {
+        logger.info("save page title {} markdown {}", title, markdown);
         dbClient.rxUpdateWithParams(sqlQueries.get(SqlQuery.CREATE_PAGE), new JsonArray().add(title).add(markdown))
                 .ignoreElement()
                 .subscribe(CompletableHelper.toObserver(resultHandler));
@@ -163,6 +164,7 @@ public class WikiDatabaseServiceImpl implements WikiDatabaseService {
 
     @Override
     public WikiDatabaseService savePage(int id, String markdown, Handler<AsyncResult<Void>> resultHandler) {
+        logger.info("update page {} markdown {}", id, markdown);
         dbClient.rxUpdateWithParams(sqlQueries.get(SqlQuery.SAVE_PAGE), new JsonArray().add(markdown).add(id))
                 .ignoreElement()
                 .subscribe(CompletableHelper.toObserver(resultHandler));
