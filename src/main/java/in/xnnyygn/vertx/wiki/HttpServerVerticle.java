@@ -100,7 +100,9 @@ public class HttpServerVerticle extends AbstractVerticle {
         router.post("/login-auth").handler(FormLoginHandler.create(auth));
         router.get("/logout").handler(this::logoutHandler);
 
-        router.get("/app/*").handler(StaticHandler.create().setCachingEnabled(false));
+        // use file system rather than classpath resources
+        router.get("/app/*").handler(StaticHandler.create("src/main/resources/webroot")
+                .setCachingEnabled(false));
         router.get("/").handler(c -> c.reroute("/app/index.html"));
         router.post("/app/markdown").handler(this::appMarkdownHandler);
 //        router.get("/").handler(this::indexHandler);
