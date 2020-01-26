@@ -68,7 +68,7 @@ public class WikiDatabaseVerticle extends AbstractVerticle {
 
         rxLoadSqlQueries()
                 .flatMap(sqlQueries -> WikiDatabaseService.rxCreate(dbClient, sqlQueries))
-                .subscribe(new SingleObserver<>() {
+                .subscribe(new SingleObserver<WikiDatabaseService>() {
                     @Override
                     public void onSubscribe(Disposable d) {
                     }

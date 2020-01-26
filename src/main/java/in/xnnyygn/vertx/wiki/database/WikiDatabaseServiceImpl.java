@@ -1,8 +1,6 @@
 package in.xnnyygn.vertx.wiki.database;
 
 import in.xnnyygn.vertx.wiki.SQLConnectionUtils;
-import io.reactivex.Completable;
-import io.reactivex.CompletableTransformer;
 import io.reactivex.MaybeObserver;
 import io.reactivex.Single;
 import io.reactivex.disposables.Disposable;
@@ -15,7 +13,6 @@ import io.vertx.ext.sql.ResultSet;
 import io.vertx.reactivex.CompletableHelper;
 import io.vertx.reactivex.SingleHelper;
 import io.vertx.reactivex.ext.jdbc.JDBCClient;
-import io.vertx.reactivex.ext.sql.SQLConnection;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -103,7 +100,7 @@ public class WikiDatabaseServiceImpl implements WikiDatabaseService {
     }
 
     private static MaybeObserver<JsonObject> maybeJsonFoundObserver(Handler<AsyncResult<JsonObject>> resultHandler) {
-        return new MaybeObserver<>() {
+        return new MaybeObserver<JsonObject>() {
             @Override
             public void onSubscribe(Disposable d) {
             }
@@ -130,7 +127,7 @@ public class WikiDatabaseServiceImpl implements WikiDatabaseService {
     }
 
     private static <T> MaybeObserver<T> maybeObserver(Handler<AsyncResult<T>> resultHandler) {
-        return new MaybeObserver<>() {
+        return new MaybeObserver<T>() {
             @Override
             public void onSubscribe(Disposable d) {
             }

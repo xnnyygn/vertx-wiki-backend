@@ -22,6 +22,7 @@ import io.vertx.reactivex.core.buffer.Buffer;
 import io.vertx.reactivex.core.http.HttpServer;
 import io.vertx.reactivex.core.http.HttpServerRequest;
 import io.vertx.reactivex.core.http.HttpServerResponse;
+import io.vertx.reactivex.ext.auth.User;
 import io.vertx.reactivex.ext.auth.jdbc.JDBCAuth;
 import io.vertx.reactivex.ext.auth.jwt.JWTAuth;
 import io.vertx.reactivex.ext.jdbc.JDBCClient;
@@ -101,7 +102,12 @@ public class HttpServerVerticle extends AbstractVerticle {
         router.get("/logout").handler(this::logoutHandler);
 
         // use file system rather than classpath resources
-        router.get("/app/*").handler(StaticHandler.create("src/main/resources/webroot")
+        String webRoot = System.getProperty("app.web.root", "src/main/resources/webroot");
+        boolean allowRootAccess = Boolean.parseBoolean(System.getProperty("app.allow.root.access"));
+        LOGGER.info("web root {}, allow root access {}", webRoot, allowRootAccess);
+        router.get("/app/*").handler(StaticHandler.create()
+                .setAllowRootFileSystemAccess(allowRootAccess)
+                .setWebRoot(webRoot)
                 .setCachingEnabled(false));
         router.get("/").handler(c -> c.reroute("/app/index.html"));
         router.post("/app/markdown").handler(this::appMarkdownHandler);
@@ -169,9 +175,9 @@ public class HttpServerVerticle extends AbstractVerticle {
                 .put("password", request.getHeader("password"));
         auth.rxAuthenticate(creds)
                 .flatMap(user -> Single.zip(
-                        user.rxIsAuthorized("create"),
-                        user.rxIsAuthorized("delete"),
-                        user.rxIsAuthorized("update"),
+                        rxIsAuthorized(user, "create"),
+                        rxIsAuthorized(user, "delete"),
+                        rxIsAuthorized(user, "update"),
                         (canCreate, canDelete, canUpdate) -> jwtAuth.generateToken(
                                 new JsonObject()
                                         .put("username", request.getHeader("login"))
@@ -183,7 +189,7 @@ public class HttpServerVerticle extends AbstractVerticle {
                                         .setIssuer("Vert.x")
                         )
                 ))
-                .subscribe(new SingleObserver<>() {
+                .subscribe(new SingleObserver<String>() {
                     @Override
                     public void onSubscribe(Disposable d) {
                     }
@@ -223,8 +229,7 @@ public class HttpServerVerticle extends AbstractVerticle {
     }
 
     private void apiDeletePage(RoutingContext context) {
-        context.user()
-                .rxIsAuthorized("delete")
+        rxIsAuthorized(context.user(), "delete")
                 .flatMap(canDelete -> {
                     if (!canDelete) {
                         return Single.just(403);
@@ -233,6 +238,18 @@ public class HttpServerVerticle extends AbstractVerticle {
                     return dbService.rxDeletePage(id).andThen(Single.just(204));
                 })
                 .subscribe(apiSingleObserver(context, ApiResponse::new));
+    }
+
+    private Single<Boolean> rxIsAuthorized(User user, String permission) {
+        if (permission.isEmpty()) {
+            throw new IllegalArgumentException("no permission");
+        }
+        String permissionKeyInPrincipal = "can" + permission.substring(0, 1).toUpperCase() + permission.substring(1);
+        JsonObject principal = user.principal();
+        if (principal.containsKey(permissionKeyInPrincipal)) {
+            return Single.just(principal.getBoolean(permissionKeyInPrincipal));
+        }
+        return user.rxIsAuthorized(permission);
     }
 
     private void apiUpdateHandler(RoutingContext context) {
@@ -381,7 +398,7 @@ public class HttpServerVerticle extends AbstractVerticle {
     }
 
     private <T> SingleObserver<T> apiSingleObserver(RoutingContext context, Function<T, ApiResponse> f) {
-        return new SingleObserver<>() {
+        return new SingleObserver<T>() {
             @Override
             public void onSubscribe(Disposable d) {
             }
@@ -445,7 +462,7 @@ public class HttpServerVerticle extends AbstractVerticle {
     }
 
     private void pageDeleteHandler(RoutingContext context) {
-        context.user().rxIsAuthorized("delete")
+        rxIsAuthorized(context.user(), "delete")
                 .flatMap(canDelete -> {
                     if (!canDelete) {
                         return Single.just(PageDeletionResult.UNAUTHORIZED);
@@ -519,7 +536,7 @@ public class HttpServerVerticle extends AbstractVerticle {
     }
 
     private void indexHandler(RoutingContext context) {
-        context.user().rxIsAuthorized("create")
+        rxIsAuthorized(context.user(), "create")
                 .flatMap(canCreate -> {
                     context.put("canCreatePage", canCreate);
                     return dbService.rxFetchAllPages();
@@ -566,7 +583,7 @@ public class HttpServerVerticle extends AbstractVerticle {
     }
 
     private static <T> SingleObserver<T> singleObserver(final RoutingContext context, Consumer<T> f) {
-        return new SingleObserver<>() {
+        return new SingleObserver<T>() {
             @Override
             public void onSubscribe(Disposable d) {
             }

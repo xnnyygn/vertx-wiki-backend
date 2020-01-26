@@ -98,7 +98,7 @@ public class HttpServerVerticleApiTest {
                 .putHeader("Content-Type", "application/json");
         JsonObject payload = new JsonObject()
                 .put("name", "test")
-                .put("content", "#foo");
+                .put("markdown", "#foo");
         HttpResponse<Buffer> response = WebClientUtils.rxSendJsonObject(request, payload).blockingGet();
         assertEquals(201, response.statusCode());
     }
@@ -109,7 +109,7 @@ public class HttpServerVerticleApiTest {
                 .putHeader("Content-Type", "application/json");
         JsonObject payload = new JsonObject()
                 .put("name", name)
-                .put("content", content);
+                .put("markdown", content);
         HttpResponse<Buffer> response = WebClientUtils.rxSendJsonObject(request, payload).blockingGet();
         assertEquals(201, response.statusCode());
     }
@@ -167,7 +167,7 @@ public class HttpServerVerticleApiTest {
         HttpRequest<Buffer> apiUpdateRequest = client.put(8080, "localhost", "/api/pages/" + pageId)
                 .putHeader("Authorization", "Bearer " + token);
         HttpResponse<Buffer> apiUpdateResponse = WebClientUtils.rxSendJsonObject(apiUpdateRequest, new JsonObject()
-                .put("content", "#bar")).blockingGet();
+                .put("markdown", "#bar")).blockingGet();
         assertEquals(200, apiUpdateResponse.statusCode());
 
         apiGetPageResponse = WebClientUtils.rxSend(apiGetPageRequest).blockingGet();

@@ -110,8 +110,8 @@
           <version>3.8.0</version>
           <configuration>
             <useIncrementalCompilation>false</useIncrementalCompilation>
-            <source>13</source>
-            <target>13</target>
+            <source>8</source>
+            <target>8</target>
 
             <annotationProcessors>
               <annotationProcessor>io.vertx.codegen.CodeGenProcessor</annotationProcessor>
