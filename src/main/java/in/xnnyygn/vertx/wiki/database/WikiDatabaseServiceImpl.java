@@ -13,6 +13,7 @@ import io.vertx.ext.sql.ResultSet;
 import io.vertx.reactivex.CompletableHelper;
 import io.vertx.reactivex.SingleHelper;
 import io.vertx.reactivex.ext.jdbc.JDBCClient;
+import io.vertx.reactivex.ext.sql.SQLClientHelper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -153,6 +154,10 @@ public class WikiDatabaseServiceImpl implements WikiDatabaseService {
     @Override
     public WikiDatabaseService createPage(String title, String markdown, Handler<AsyncResult<Void>> resultHandler) {
         logger.info("save page title {} markdown {}", title, markdown);
+        // https://vertx.io/blog/simplified-database-transaction-management-with-the-vert-x-rxjava-api/
+//        SQLClientHelper.inTransactionSingle(dbClient, conn -> {
+//           return Single.just(true);
+//        }).map(x -> new JsonObject().put("foo", x)).subscribe();
         dbClient.rxUpdateWithParams(sqlQueries.get(SqlQuery.CREATE_PAGE), new JsonArray().add(title).add(markdown))
                 .ignoreElement()
                 .subscribe(CompletableHelper.toObserver(resultHandler));
